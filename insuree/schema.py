@@ -5,7 +5,6 @@ import graphene
 from claim.apps import ClaimConfig
 from core.gql.export_mixin import ExportableQueryMixin
 from core.schema import signal_mutation_module_validate
-from core.services import wait_for_mutation
 from core.utils import filter_validity
 from django.db.models import Q
 from django.core.exceptions import PermissionDenied
@@ -15,7 +14,6 @@ import graphene_django_optimizer as gql_optimizer
 from location.models import Location, LocationManager
 
 from insuree.apps import InsureeConfig
-from insuree.services import validate_insuree_number
 from .models import FamilyMutation, InsureeMutation
 from django.utils.translation import gettext as _
 from location.apps import LocationConfig
@@ -166,11 +164,12 @@ class Query(ExportableQueryMixin, graphene.ObjectType):
         filters = []
         additional_filter = kwargs.get('additional_filters', None)
         chf_id = kwargs.get('chf_id')
-        
+        chf_id_max_length = getattr(InsureeConfig, 'insuree_number_length')
         if chf_id is not None:
-            errors = validate_insuree_number(chf_id)
-            if errors:
-                return ValidationMessageGQLType(False, errors[0]['errorCode'], errors[0]['message'])
+            if len(chf_id) > chf_id_max_length:
+                raise ValidationError(_("Insuree no. cannot be longer than 12 characters"))
+            if not re.match("^[a-zA-Z0-9]*$", chf_id):
+                raise ValidationError(_("Insuree no. can only contain letters and numbers"))
             filters.append(Q(chf_id=chf_id))
         if additional_filter:
             filters_from_signal = _insuree_insuree_additional_filters(
@@ -182,7 +181,6 @@ class Query(ExportableQueryMixin, graphene.ObjectType):
             filters += filter_validity(**kwargs)
         client_mutation_id = kwargs.get("client_mutation_id", None)
         if client_mutation_id:
-            wait_for_mutation(client_mutation_id)
             filters.append(
                 Q(mutations__mutation__client_mutation_id=client_mutation_id))
         parent_location = kwargs.get('parent_location')
@@ -199,7 +197,7 @@ class Query(ExportableQueryMixin, graphene.ObjectType):
             filters += [(Q(current_village__isnull=False) & Q(**{current_village: parent_location})) |
                         (Q(current_village__isnull=True) & Q(**{family_location: parent_location}))]
 
-        if not info.context.user._u.is_imis_admin and (kwargs.get('ignore_location') == False or kwargs.get('ignore_location') is None) and not InsureeConfig.no_location_check:
+        if not info.context.user._u.is_imis_admin and (kwargs.get('ignore_location') == False or kwargs.get('ignore_location') is None):
             # Limit the list by the logged in user location mapping
             filters += [Q(LocationManager().build_user_location_filter_query(info.context.user._u, prefix='current_village__parent__parent', loc_types=['D']) |
                         LocationManager().build_user_location_filter_query(info.context.user._u, prefix='family__location__parent__parent', loc_types=['D']))]
@@ -272,7 +270,6 @@ class Query(ExportableQueryMixin, graphene.ObjectType):
             filters += filter_validity(**kwargs)
         client_mutation_id = kwargs.get("client_mutation_id", None)
         if client_mutation_id:
-            wait_for_mutation(client_mutation_id)
             filters.append(
                 Q(mutations__mutation__client_mutation_id=client_mutation_id))
         parent_location = kwargs.get('parent_location')
@@ -288,7 +285,7 @@ class Query(ExportableQueryMixin, graphene.ObjectType):
             filters += [Q(**{f: parent_location})]
 
         # Limit the list by the logged in user location mapping
-        if not info.context.user._u.is_imis_admin and not InsureeConfig.no_location_check:
+        if not info.context.user._u.is_imis_admin:
             filters += [LocationManager().build_user_location_filter_query(info.context.user._u,
                                                                            prefix='location__parent__parent', loc_types=['D'])]
 

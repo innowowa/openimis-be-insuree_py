@@ -10,7 +10,10 @@ from graphql import ResolveInfo
 from insuree.apps import InsureeConfig
 from location import models as location_models
 from location.models import LocationManager
+from django.core.validators import MinLengthValidator
 
+#AUTOGENERATE CHFID
+from .utils import generate_incremental_chfid
 
 class Gender(models.Model):
     code = models.CharField(db_column='Code', primary_key=True, max_length=1)
@@ -34,15 +37,15 @@ class InsureePhoto(core_models.VersionedModel):
     insuree = models.ForeignKey("Insuree", on_delete=models.DO_NOTHING,
                                 db_column='InsureeID', blank=True, null=True, related_name="photos")
     chf_id = models.CharField(
-        db_column='CHFID', max_length=50, blank=True, null=True)
+        db_column='CHFID', max_length=12, blank=True, null=True)
     folder = models.CharField(db_column='PhotoFolder', max_length=255, blank=True, null=True)
     filename = models.CharField(
         db_column='PhotoFileName', max_length=250, blank=True, null=True)
     # Support of BinaryField is database-related: prefer to stick to b64-encoded
     photo = models.TextField(blank=True, null=True)
     # No FK in database (so value may not be an existing officer.id !)
-    officer_id = models.IntegerField(db_column='OfficerID', blank=True, null=True)
-    date = core.fields.DateField(db_column='PhotoDate', blank=True, null=True)
+    officer_id = models.IntegerField(db_column='OfficerID')
+    date = core.fields.DateField(db_column='PhotoDate')
     audit_user_id = models.IntegerField(
         db_column='AuditUserID', blank=True, null=True)
     # rowid = models.TextField(db_column='RowID', blank=True, null=True)
@@ -91,8 +94,7 @@ class Family(core_models.VersionedModel, core_models.ExtendableModel):
     id = models.AutoField(db_column='FamilyID', primary_key=True)
     uuid = models.CharField(db_column='FamilyUUID',
                             max_length=36, default=uuid.uuid4, unique=True)
-    # needed because the version model: on head can be on several families (diff validity_to)
-    head_insuree = models.ForeignKey(
+    head_insuree = models.OneToOneField(
         'Insuree', models.DO_NOTHING, db_column='InsureeID', null=False,
         related_name='head_of')
     location = models.ForeignKey(
@@ -138,7 +140,7 @@ class Family(core_models.VersionedModel, core_models.ExtendableModel):
             queryset = queryset.exclude(
                 members__chf_id__in=InsureeConfig.excluded_insuree_chfids
             )
-        if settings.ROW_SECURITY and not user.is_imis_admin and not InsureeConfig.no_location_check:
+        if settings.ROW_SECURITY and not user.is_imis_admin:
             from location.schema import LocationManager
             return queryset.filter(
                 LocationManager().build_user_location_filter_query(user._u, prefix='location__parent__parent', loc_types=['D']))
@@ -225,7 +227,7 @@ class Insuree(core_models.VersionedModel, core_models.ExtendableModel):
 
     family = models.ForeignKey(Family, models.DO_NOTHING, blank=True, null=True,
                                db_column='FamilyID', related_name="members")
-    chf_id = models.CharField(db_column='CHFID', max_length=50, blank=True, null=True)
+    chf_id = models.CharField(db_column='CHFID', max_length=6, blank=True, null=True)
     last_name = models.CharField(db_column='LastName', max_length=100)
     other_names = models.CharField(db_column='OtherNames', max_length=100)
 
@@ -314,7 +316,7 @@ class Insuree(core_models.VersionedModel, core_models.ExtendableModel):
         # The insuree "health facility" is the "First Point of Service"
         # (aka the 'preferred/reference' HF for an insuree)
         # ... so not to be used as 'strict filtering'
-        if settings.ROW_SECURITY and not user.is_imis_admin and not InsureeConfig.no_location_check:
+        if settings.ROW_SECURITY and not user.is_imis_admin:
             return queryset.filter(
                 Q(LocationManager().build_user_location_filter_query(user._u, prefix='current_village__parent__parent', loc_types=['D']) |
                   LocationManager().build_user_location_filter_query(user._u, prefix='family__location__parent__parent', loc_types=['D']))
@@ -405,3 +407,21 @@ class PolicyRenewalDetail(core_models.VersionedModel):
     class Meta:
         managed = True
         db_table = 'tblPolicyRenewalDetails'
+
+class TblInsuree(models.Model):
+
+    insuree_id = models.AutoField(db_column="InsureeID", primary_key=True)
+    chfid = models.CharField(db_column="CHFID", max_length=6, unique=True, blank=True, validators=[MinLengthValidator(6)])  # Ensure unique and not required in forms
+    # other fields...
+
+    def generate_chfid(self):
+        # Logic to generate a unique chfid, e.g., using uuid
+        return str(uuid.uuid4())[:6].upper()  # Example logic, customize as needed
+
+    def save(self, *args, **kwargs):
+        if not self.chfid:  # Only generate if chfid is not already set
+            self.chfid = self.generate_chfid()
+        super(TblInsuree, self).save(*args, **kwargs)
+
+    class Meta:
+        db_table = 'tblInsuree'

@@ -1,5 +1,5 @@
 from django.utils.translation import gettext as _
-
+import numpy as np
 
 def generate_error_return(instance_name_str, checksum_return=False):
     from insuree.apps import InsureeConfig
@@ -55,3 +55,25 @@ class IdentifierValidator:
             return generate_error_return("vehicle")
         if not idnv[0] == '3':
             return generate_error_return("vehicle", checksum_return=True)
+
+##AUTOGENERATE CHFID
+
+def generate_incremental_chfid():
+    from .models import TblInsuree
+
+    # Get all CHFIDs that start with 'S' and are followed by digits only
+    insurees_with_valid_chfid = TblInsuree.objects.filter(chfid__regex=r'^S\d{8}$').order_by('chfid')
+
+    if insurees_with_valid_chfid.exists():
+        last_insuree = insurees_with_valid_chfid.last()
+        last_chfid = last_insuree.chfid[1:]  # Remove the prefix 'S'
+        
+        # Check if the last_chfid is a valid integer
+        if last_chfid.isdigit():
+            new_chfid = 'S' + str(int(last_chfid) + np.random.randint(1,50)).zfill(8)  # Increment and add leading zeros
+        else:
+            new_chfid = 'S00000001'  # Default starting value
+    else:
+        new_chfid = 'S00000001'  # Starting point if no valid records exist
+
+    return new_chfid
